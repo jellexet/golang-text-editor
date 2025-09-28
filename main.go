@@ -3,9 +3,9 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"os"
-
 	"golang.org/x/sys/unix"
+	"os"
+	"unicode"
 )
 
 // enableRawMode sets the terminal connected to the given file descriptor (fd)
@@ -31,6 +31,8 @@ func enableRawMode(fd int) (*unix.Termios, error) {
 
 	newState := *oldState
 	newState.Lflag &^= unix.ECHO | unix.ICANON // disable echo and canonical mode
+	newState.Lflag &^= unix.ISIG | unix.IEXTEN // disable Ctrl-C and Ctrl-Z (SIGINT - SIGSTP) and Ctrl-V
+	newState.Iflag &^= unix.IXON               // disable Ctrl-S and Ctrl-Q (XOFF - XON Stop and Start output)
 	newState.Iflag &^= unix.ICRNL              // disable Carriage Return to Newline translation
 
 	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &newState); err != nil {
@@ -51,12 +53,14 @@ func main() {
 
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Println("Write something...")
+	fmt.Println("Write something. press \"q\" to exit the program")
 
 	for {
 		char, _ := reader.ReadByte()
 		if char == 'q' {
 			break
+		} else if unicode.IsControl(rune(char)) {
+			fmt.Printf("Control character %U cannot be printed\n", char)
 		}
 		fmt.Printf("You typed: %#U \n", char)
 	}
