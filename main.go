@@ -75,6 +75,17 @@ func processKeypress(callback func() (key byte)) {
 	}
 }
 
+func refreshScreen() {
+	// \x1b is 27 in hex. When followed by [ it means it follows an escape sequence.
+	// In this case J clears the screen, the argument 2 clears all the screen.
+	const clearScreen = "\x1b[2J"
+
+	const moveCursorTop = "\x1b[H"
+
+	fmt.Print(clearScreen)
+	fmt.Print(moveCursorTop)
+}
+
 func main() {
 	fd := int(os.Stdin.Fd())
 
@@ -90,6 +101,7 @@ func main() {
 		return key
 	}
 
+	refreshScreen()
 	fmt.Printf("Write something. press \"Ctrl-q\" to exit the program\r\n")
 	processKeypress(onKeypress)
 }
