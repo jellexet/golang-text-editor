@@ -75,15 +75,43 @@ func processKeypress(callback func() (key byte)) {
 	}
 }
 
-func refreshScreen() {
+// Constants used as arguments for the clearScreen function
+const (
+	line        rune = '0'
+	belowCursor rune = '1'
+	screen      rune = '2'
+)
+
+// clearScreen() clears the screen
+func clearScreen(element rune) {
 	// \x1b is 27 in hex. When followed by [ it means it follows an escape sequence.
-	// In this case J clears the screen, the argument 2 clears all the screen.
-	const clearScreen = "\x1b[2J"
+	// In this case J clears an element in the screen,
+	// the argument 2 clears all the screen, 1 below the cursor and 0 the line
+	clearScreenCmd := fmt.Sprintf("\x1b[%cJ", element)
+	fmt.Print(clearScreenCmd)
+}
 
+// moveCursorTopLeft() repositions the cursor on the top left corner
+func moveCursorTopLeft() {
 	const moveCursorTop = "\x1b[H"
-
-	fmt.Print(clearScreen)
 	fmt.Print(moveCursorTop)
+}
+
+// getWindowSize() returns rows and columns of the current window
+func getWindowSize(fd int) (rows, cols uint16) {
+	winSize, err := unix.IoctlGetWinsize(fd, unix.TIOCGWINSZ)
+	if err != nil {
+		panic(err)
+	}
+	return winSize.Row, winSize.Col
+}
+
+// drawTildes() draws a ~ for each row above the end of the file
+func drawTildes(fd int) {
+	rows, _ := getWindowSize(fd)
+	for row := uint16(1); row < rows-1; row++ {
+		fmt.Print("~\r\n")
+	}
 }
 
 func main() {
@@ -94,6 +122,8 @@ func main() {
 		panic(err)
 	}
 	defer disableRawMode(fd, oldState)
+	defer clearScreen(screen)
+	defer moveCursorTopLeft()
 
 	onKeypress := func() (key byte) {
 		reader := bufio.NewReader(os.Stdin)
@@ -101,7 +131,9 @@ func main() {
 		return key
 	}
 
-	refreshScreen()
+	clearScreen(screen)
+	drawTildes(fd)
+	moveCursorTopLeft()
 	fmt.Printf("Write something. press \"Ctrl-q\" to exit the program\r\n")
 	processKeypress(onKeypress)
 }
