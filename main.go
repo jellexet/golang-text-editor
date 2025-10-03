@@ -71,7 +71,7 @@ func processKeypress(callback func() (key byte)) {
 				fmt.Printf("Control character %U cannot be printed\r\n", key)
 			}
 		}
-		fmt.Printf("You typed: %#U \r\n", key)
+		fmt.Printf("%c", key)
 	}
 }
 
@@ -109,9 +109,18 @@ func getWindowSize(fd int) (rows, cols uint16) {
 // drawTildes() draws a ~ for each row above the end of the file
 func drawTildes(fd int) {
 	rows, _ := getWindowSize(fd)
-	for row := uint16(1); row < rows-1; row++ {
+	for row := uint16(1); row < rows; row++ {
 		fmt.Print("~\r\n")
 	}
+}
+
+func getCursorPosition(fd int) int {
+	const getCursorPosCmd string = "\x1b[6n"
+	res, err := unix.Write(fd, []byte(getCursorPosCmd))
+	if err != nil {
+		panic(err)
+	}
+	return res
 }
 
 func main() {
