@@ -114,13 +114,29 @@ func drawTildes(fd int) {
 	}
 }
 
-func getCursorPosition(fd int) int {
-	const getCursorPosCmd string = "\x1b[6n"
-	res, err := unix.Write(fd, []byte(getCursorPosCmd))
-	if err != nil {
-		panic(err)
+func getCursorPosition(fd int) (row, col int, err error) {
+	// Ask for cursor position: ESC [ 6n
+	if _, err = unix.Write(fd, []byte("\x1b[6n")); err != nil {
+		return
 	}
-	return res
+
+	// Read response: ESC [ rows ; cols R
+	buf := make([]byte, 32)
+	n, err := unix.Read(fd, buf)
+	if err != nil {
+		return
+	}
+
+	// Example response: "\x1b[24;80R"
+	var r, c int
+	_, scanErr := fmt.Sscanf(string(buf[:n]), "\x1b[%d;%dR", &r, &c)
+	if scanErr != nil {
+		err = scanErr
+		return
+	}
+
+	row, col = r, c
+	return row, col, nil
 }
 
 func main() {
@@ -144,5 +160,7 @@ func main() {
 	drawTildes(fd)
 	moveCursorTopLeft()
 	fmt.Printf("Write something. press \"Ctrl-q\" to exit the program\r\n")
+	row, col, _ := getCursorPosition(fd)
+	fmt.Printf("Cursor position: row %d, col %d", row, col)
 	processKeypress(onKeypress)
 }

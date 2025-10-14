@@ -230,33 +230,33 @@ func (r *Rope) Print(indent string) {
 }
 
 // Example usage
-//rope := NewRope("Hello, World!")
-//fmt.Println("Original:", rope.String())
-//fmt.Println("Length:", rope.Length())
+// rope := NewRope("Hello, World!")
+// fmt.Println("Original:", rope.String())
+// fmt.Println("Length:", rope.Length())
 //
 // Index access
-//if ch, err := rope.Index(7); err == nil {
-//	fmt.Printf("Character at index 7: %c\n", ch)
-//}
+// if ch, err := rope.Index(7); err == nil {
+// 	fmt.Printf("Character at index 7: %c\n", ch)
+// }
 //
 // Insert
-//rope, _ = rope.Insert(7, "Beautiful ")
-//fmt.Println("After insert:", rope.String())
+// rope, _ = rope.Insert(7, "Beautiful ")
+// fmt.Println("After insert:", rope.String())
 //
 // Substring
-//if sub, err := rope.Substring(7, 16); err == nil {
-//	fmt.Println("Substring [7:16]:", sub)
-//}
+// if sub, err := rope.Substring(7, 16); err == nil {
+// 	fmt.Println("Substring [7:16]:", sub)
+// }
 //
 // Delete
-//rope, _ = rope.Delete(7, 16)
-//fmt.Println("After delete:", rope.String())
+// rope, _ = rope.Delete(7, 16)
+// fmt.Println("After delete:", rope.String())
 //
 // Concatenation
-//rope2 := NewRope(" How are you?")
-//rope = Concat(rope, rope2)
-//fmt.Println("After concat:", rope.String())
+// rope2 := NewRope(" How are you?")
+// rope = Concat(rope, rope2)
+// fmt.Println("After concat:", rope.String())
 //
 // Print structure
-//fmt.Println("\nRope structure:")
-//rope.Print("")
+// fmt.Println("\nRope structure:")
+// rope.Print("")
