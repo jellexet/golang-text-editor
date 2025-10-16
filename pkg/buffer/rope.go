@@ -33,7 +33,7 @@ func NewRope(s string) *Rope {
 	return &Rope{
 		left:   left,
 		right:  right,
-		weight: left.Weight(), // sum of all leaves in left subtree
+		weight: left.Length(),
 	}
 }
 
