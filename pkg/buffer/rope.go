@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// Rope data structure, basically a binary tree
+// Rope data structure - a binary tree for efficient text manipulation
 type Rope struct {
 	left   *Rope
 	right  *Rope
@@ -74,6 +74,10 @@ func (r *Rope) isLeaf() bool {
 
 // Index returns the character at the given index
 func (r *Rope) Index(i int) (byte, error) {
+	if r == nil {
+		return 0, fmt.Errorf("rope is nil")
+	}
+
 	length := r.Length()
 	if i < 0 || i >= length {
 		return 0, fmt.Errorf("index %d out of bounds [0, %d)", i, length)
@@ -109,6 +113,10 @@ func Concat(r1, r2 *Rope) *Rope {
 
 // Split splits the rope at the given index into two ropes
 func (r *Rope) Split(i int) (*Rope, *Rope, error) {
+	if r == nil {
+		return nil, nil, fmt.Errorf("rope is nil")
+	}
+
 	length := r.Length()
 	if i < 0 || i > length {
 		return nil, nil, fmt.Errorf("index %d out of bounds [0, %d]", i, length)
@@ -150,8 +158,12 @@ func (r *Rope) Split(i int) (*Rope, *Rope, error) {
 	return r.left, r.right, nil
 }
 
-// Insert inserts a string at the given index
+// Insert inserts a string at the given index - returns new rope
 func (r *Rope) Insert(i int, s string) (*Rope, error) {
+	if r == nil {
+		return NewRope(s), nil
+	}
+
 	length := r.Length()
 	if i < 0 || i > length {
 		return nil, fmt.Errorf("index %d out of bounds [0, %d]", i, length)
@@ -166,8 +178,12 @@ func (r *Rope) Insert(i int, s string) (*Rope, error) {
 	return Concat(Concat(left, newRope), right), nil
 }
 
-// Delete deletes characters from start to end (exclusive)
+// Delete deletes characters from start to end (exclusive) - returns new rope
 func (r *Rope) Delete(start, end int) (*Rope, error) {
+	if r == nil {
+		return nil, fmt.Errorf("rope is nil")
+	}
+
 	length := r.Length()
 	if start < 0 || end > length || start > end {
 		return nil, fmt.Errorf("invalid range [%d, %d) for length %d", start, end, length)
@@ -193,6 +209,10 @@ func (r *Rope) Delete(start, end int) (*Rope, error) {
 
 // Substring returns a substring from start to end (exclusive)
 func (r *Rope) Substring(start, end int) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("rope is nil")
+	}
+
 	length := r.Length()
 	if start < 0 || end > length || start > end {
 		return "", fmt.Errorf("invalid range [%d, %d) for length %d", start, end, length)
@@ -218,6 +238,7 @@ func (r *Rope) Substring(start, end int) (string, error) {
 // Print displays the rope structure (for debugging)
 func (r *Rope) Print(indent string) {
 	if r == nil {
+		fmt.Printf("%s<nil>\n", indent)
 		return
 	}
 	if r.isLeaf() {
@@ -229,34 +250,11 @@ func (r *Rope) Print(indent string) {
 	r.right.Print(indent + "  R:")
 }
 
-// Example usage
-// rope := NewRope("Hello, World!")
-// fmt.Println("Original:", rope.String())
-// fmt.Println("Length:", rope.Length())
-//
-// Index access
-// if ch, err := rope.Index(7); err == nil {
-// 	fmt.Printf("Character at index 7: %c\n", ch)
-// }
-//
-// Insert
-// rope, _ = rope.Insert(7, "Beautiful ")
-// fmt.Println("After insert:", rope.String())
-//
-// Substring
-// if sub, err := rope.Substring(7, 16); err == nil {
-// 	fmt.Println("Substring [7:16]:", sub)
-// }
-//
-// Delete
-// rope, _ = rope.Delete(7, 16)
-// fmt.Println("After delete:", rope.String())
-//
-// Concatenation
-// rope2 := NewRope(" How are you?")
-// rope = Concat(rope, rope2)
-// fmt.Println("After concat:", rope.String())
-//
-// Print structure
-// fmt.Println("\nRope structure:")
-// rope.Print("")
+// Rebalance optimizes the rope structure (optional, for maintaining performance)
+func (r *Rope) Rebalance() *Rope {
+	if r == nil {
+		return nil
+	}
+	// Simple rebalancing: convert to string and rebuild
+	return NewRope(r.String())
+}
