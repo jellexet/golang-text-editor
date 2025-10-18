@@ -20,8 +20,8 @@ type Session struct {
 	undoStack  []Action
 	redoStack  []Action
 	cursorIdx  int // linear index in the rope
-	cursorRow  int // 1-indexed row
-	cursorCol  int // 1-indexed column
+	cursorRow  int // 1-indexed row (screen position)
+	cursorCol  int // 1-indexed column (screen position)
 	screenRows uint16
 	screenCols uint16
 }
@@ -66,7 +66,14 @@ const (
 const (
 	Return    byte = 0x0D
 	Backspace byte = 0x7F
-	Newline   byte = 0x0A
+)
+
+// Arrow key constants
+const (
+	ArrowUp    = 1000
+	ArrowDown  = 1001
+	ArrowLeft  = 1002
+	ArrowRight = 1003
 )
 
 // Screen clearing constants
@@ -89,37 +96,63 @@ func InitSession(fd int) {
 	session.screenCols = cols
 }
 
+// editorReadKey reads a key from stdin, handling escape sequences
+func editorReadKey(callback func() byte) int {
+	c := callback()
+
+	if c == Esc {
+		// Try to read the next two bytes for escape sequence
+		seq1 := callback()
+		seq2 := callback()
+
+		if seq1 == '[' {
+			switch seq2 {
+			case 'A':
+				return ArrowUp
+			case 'B':
+				return ArrowDown
+			case 'C':
+				return ArrowRight
+			case 'D':
+				return ArrowLeft
+			}
+		}
+		return int(Esc)
+	}
+
+	return int(c)
+}
+
 // ProcessKeypress handles keyboard input and updates editor state
 func ProcessKeypress(callback func() (key byte)) {
 	fd := int(unix.Stdin)
 	InitSession(fd)
 
+	// Initial screen draw
+	refreshScreen(fd)
+
 	for {
-		key := callback()
+		key := editorReadKey(callback)
 
-		// Handle escape sequences (arrow keys)
-		if key == Esc {
-			seq1 := callback()
-			seq2 := callback()
-
-			if seq1 == '[' {
-				switch seq2 {
-				case 'A': // Up arrow
-					handleArrowUp()
-				case 'B': // Down arrow
-					handleArrowDown()
-				case 'C': // Right arrow
-					handleArrowRight()
-				case 'D': // Left arrow
-					handleArrowLeft()
-				}
+		// Handle arrow keys
+		if key >= 1000 {
+			switch key {
+			case ArrowUp:
+				editorMoveCursor(ArrowUp)
+			case ArrowDown:
+				editorMoveCursor(ArrowDown)
+			case ArrowLeft:
+				editorMoveCursor(ArrowLeft)
+			case ArrowRight:
+				editorMoveCursor(ArrowRight)
 			}
 			refreshScreen(fd)
 			continue
 		}
 
 		// Handle control characters
-		switch key {
+		c := byte(key)
+		switch c {
 		case CtrlQ:
 			return
 		case CtrlZ:
@@ -136,17 +169,85 @@ func ProcessKeypress(callback func() (key byte)) {
 			refreshScreen(fd)
 		default:
 			// Regular character
-			if key >= 32 && key < 127 {
-				handleInsert(string(key))
+			if c >= 32 && c < 127 {
+				handleInsert(string(c))
 				refreshScreen(fd)
 			}
 		}
 	}
 }
 
+// editorMoveCursor moves the cursor based on arrow key
+func editorMoveCursor(key int) {
+	lines := getLines()
+	currentLine := ""
+	if session.cursorRow > 0 && session.cursorRow <= len(lines) {
+		currentLine = lines[session.cursorRow-1]
+	}
+
+	switch key {
+	case ArrowLeft:
+		if session.cursorCol > 1 {
+			session.cursorCol--
+			session.cursorIdx--
+		} else if session.cursorRow > 1 {
+			// Move to end of previous line
+			session.cursorRow--
+			prevLine := lines[session.cursorRow-1]
+			session.cursorCol = len(prevLine) + 1
+			session.cursorIdx--
+		}
+
+	case ArrowRight:
+		if session.cursorCol <= len(currentLine) {
+			session.cursorCol++
+			session.cursorIdx++
+		} else if session.cursorRow < len(lines) {
+			// Move to start of next line
+			session.cursorRow++
+			session.cursorCol = 1
+			session.cursorIdx++
+		}
+
+	case ArrowUp:
+		if session.cursorRow > 1 {
+			session.cursorRow--
+			// Adjust column if new line is shorter
+			prevLine := lines[session.cursorRow-1]
+			if session.cursorCol > len(prevLine)+1 {
+				session.cursorCol = len(prevLine) + 1
+			}
+			// Recalculate cursorIdx
+			session.cursorIdx = getLineStartIndex(session.cursorRow) + session.cursorCol - 1
+		}
+
+	case ArrowDown:
+		if session.cursorRow < len(lines) {
+			session.cursorRow++
+			// Adjust column if new line is shorter
+			if session.cursorRow <= len(lines) {
+				nextLine := lines[session.cursorRow-1]
+				if session.cursorCol > len(nextLine)+1 {
+					session.cursorCol = len(nextLine) + 1
+				}
+			}
+			// Recalculate cursorIdx
+			session.cursorIdx = getLineStartIndex(session.cursorRow) + session.cursorCol - 1
+		}
+	}
+
+	// Bounds check
+	if session.cursorIdx < 0 {
+		session.cursorIdx = 0
+	}
+	if session.cursorIdx > session.rope.Length() {
+		session.cursorIdx = session.rope.Length()
+	}
+}
+
 // handleInsert inserts a character at cursor position
 func handleInsert(s string) {
-	if session.rope == nil {
+	if session.rope == nil || session.rope.Length() == 0 {
 		session.rope = buffer.NewRope(s)
 	} else {
 		newRope, err := session.rope.Insert(session.cursorIdx, s)
@@ -161,10 +262,11 @@ func handleInsert(s string) {
 			session.redoStack = []Action{} // Clear redo stack on new action
 
 			session.rope = newRope
-			session.cursorIdx += len(s)
-			updateCursorPosition()
 		}
 	}
+
+	session.cursorIdx += len(s)
+	updateCursorPosition()
 }
 
 // handleBackspace deletes character before cursor
@@ -253,57 +355,6 @@ func handleRedo() {
 	updateCursorPosition()
 }
 
-// Arrow key handlers
-func handleArrowLeft() {
-	if session.cursorIdx > 0 {
-		session.cursorIdx--
-		updateCursorPosition()
-	}
-}
-
-func handleArrowRight() {
-	if session.cursorIdx < session.rope.Length() {
-		session.cursorIdx++
-		updateCursorPosition()
-	}
-}
-
-func handleArrowUp() {
-	lines := getLines()
-	if session.cursorRow > 1 {
-		session.cursorRow--
-		// Try to maintain column position
-		if session.cursorRow-1 < len(lines) {
-			lineStart := getLineStartIndex(session.cursorRow)
-			lineLen := len(lines[session.cursorRow-1])
-			if session.cursorCol-1 <= lineLen {
-				session.cursorIdx = lineStart + session.cursorCol - 1
-			} else {
-				session.cursorIdx = lineStart + lineLen
-				session.cursorCol = lineLen + 1
-			}
-		}
-	}
-}
-
-func handleArrowDown() {
-	lines := getLines()
-	if session.cursorRow < len(lines) {
-		session.cursorRow++
-		// Try to maintain column position
-		if session.cursorRow-1 < len(lines) {
-			lineStart := getLineStartIndex(session.cursorRow)
-			lineLen := len(lines[session.cursorRow-1])
-			if session.cursorCol-1 <= lineLen {
-				session.cursorIdx = lineStart + session.cursorCol - 1
-			} else {
-				session.cursorIdx = lineStart + lineLen
-				session.cursorCol = lineLen + 1
-			}
-		}
-	}
-}
-
 // updateCursorPosition updates row and column based on linear index
 func updateCursorPosition() {
 	text := session.rope.String()
@@ -344,28 +395,47 @@ func getLineStartIndex(row int) int {
 
 // refreshScreen redraws the entire screen
 func refreshScreen(fd int) {
-	ClearScreen(Screen)
-	MoveCursorTopLeft()
+	var buf strings.Builder
+
+	// Clear screen and move cursor to top-left
+	buf.WriteString("\x1b[2J")
+	buf.WriteString("\x1b[H")
 
 	lines := getLines()
 	rows, _ := getWindowSize(fd)
 
-	// Draw content lines
-	for i := 0; i < len(lines) && i < int(rows)-1; i++ {
-		fmt.Print(lines[i] + "\r\n")
+	// Draw content lines (leave one row for status bar)
+	for i := 0; i < int(rows)-1; i++ {
+		if i < len(lines) {
+			buf.WriteString(lines[i])
+		} else {
+			buf.WriteString("~")
+		}
+		buf.WriteString("\r\n")
 	}
 
-	// Draw tildes for empty lines
-	for i := len(lines); i < int(rows)-1; i++ {
-		fmt.Print("~\r\n")
-	}
-
-	// Draw status bar
-	fmt.Printf("\r\n\x1b[7mRow:%d Col:%d Idx:%d Len:%d | Ctrl-Q:Quit Ctrl-Z:Undo Ctrl-R:Redo\x1b[m",
+	// Draw status bar (inverted colors)
+	statusMsg := fmt.Sprintf("Row:%d Col:%d Idx:%d Len:%d | Ctrl-Q:Quit Ctrl-Z:Undo Ctrl-R:Redo",
 		session.cursorRow, session.cursorCol, session.cursorIdx, session.rope.Length())
 
+	// Truncate status if too long
+	if len(statusMsg) > int(session.screenCols) {
+		statusMsg = statusMsg[:session.screenCols]
+	}
+
+	buf.WriteString("\x1b[7m") // Inverted colors
+	buf.WriteString(statusMsg)
+	// Pad with spaces to fill the line
+	for i := len(statusMsg); i < int(session.screenCols); i++ {
+		buf.WriteString(" ")
+	}
+	buf.WriteString("\x1b[m") // Reset colors
+
 	// Move cursor to correct position
-	moveCursor(session.cursorRow, session.cursorCol)
+	buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", session.cursorRow, session.cursorCol))
+
+	// Write everything at once
+	fmt.Print(buf.String())
 }
 
 // ClearScreen clears the screen
@@ -376,11 +446,6 @@ func ClearScreen(element rune) {
 // MoveCursorTopLeft moves cursor to top left
 func MoveCursorTopLeft() {
 	fmt.Print("\x1b[H")
-}
-
-// moveCursor moves cursor to specific position
-func moveCursor(row, col int) {
-	fmt.Printf("\x1b[%d;%dH", row, col)
 }
 
 // DrawTildes draws tildes for empty lines
