@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/jellexet/golang-text-editor/pkg/buffer"
 	"golang.org/x/sys/unix"
+	"os"
 	"strings"
 )
 
@@ -67,8 +68,9 @@ func DisableRawMode(fd int, prevState *unix.Termios) error {
 const (
 	CtrlF byte = 0x06
 	CtrlQ byte = 0x11
-	CtrlZ byte = 0x1A
 	CtrlR byte = 0x12
+	CtrlS byte = 0x13
+	CtrlZ byte = 0x1A
 	Esc   byte = 0x1B
 )
 
@@ -95,7 +97,7 @@ const (
 
 // Initialize session with rope and screen dimensions
 func InitSession(fd int, filename string, initialContent string) {
-	session.rope = buffer.NewRope("")
+	session.rope = buffer.NewRope(initialContent)
 	session.filename = filename
 	session.cursorIdx = 0
 	session.cursorRow = 1
@@ -204,11 +206,14 @@ func ProcessKeypress(fd int, callback func() (key byte)) {
 		case CtrlF:
 			handleSearch(callback)
 			refreshScreen(fd)
-		case CtrlZ:
-			handleUndo()
-			refreshScreen(fd)
 		case CtrlR:
 			handleRedo()
+			refreshScreen(fd)
+		case CtrlS:
+			handleSave(callback)
+			refreshScreen(fd)
+		case CtrlZ:
+			handleUndo()
 			refreshScreen(fd)
 		case Backspace:
 			handleBackspace()
@@ -404,6 +409,28 @@ func handleRedo() {
 	updateCursorPosition()
 }
 
+// Saves the current buffer content to a file.
+func handleSave(callback func() byte) {
+	if session.filename == "[No Name]" {
+		filename := editorDrawPrompt("Save as (Esc to cancel):", callback)
+		if filename == "" {
+			session.statusMessage = "Save canceled"
+			return
+		}
+		session.filename = filename
+	}
+
+	content := session.rope.String()
+
+	err := os.WriteFile(session.filename, []byte(content), 0644)
+	if err != nil {
+		session.statusMessage = fmt.Sprintf("Error saving file: %v", err)
+		return
+	}
+
+	session.statusMessage = fmt.Sprintf("Saved %d bytes to %s", len(content), session.filename)
+}
+
 // Draws a prompt on the status bar and waits for user input
 func editorDrawPrompt(prompt string, callback func() byte) string {
 	var input string
@@ -560,7 +587,7 @@ func refreshScreen(fd int) {
 		session.statusMessage = "" // Clear it after displaying once
 	} else {
 		// Show default status
-		statusMsg = fmt.Sprintf("File: %s | Row:%d Col:%d | Ctrl-Q:Quit Ctrl-F:Find",
+		statusMsg = fmt.Sprintf("File: %s | Row:%d Col:%d | Ctrl-Q:Quit Ctrl-S:Save Ctrl-F:Find",
 			session.filename, session.cursorRow, session.cursorCol)
 	}
 
