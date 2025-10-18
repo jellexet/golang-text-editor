@@ -1,13 +1,19 @@
 package main
 
 import (
-	"bufio"
 	"github.com/jellexet/golang-text-editor/pkg/editor"
+	"golang.org/x/sys/unix"
+	"log"
 	"os"
 )
 
 func main() {
 	fd := int(os.Stdin.Fd())
+
+	// Check if stdin is a terminal
+	if _, err := unix.IoctlGetTermios(fd, unix.TCGETS); err != nil {
+		log.Fatalln("Not a TTY. This editor requires a TTY to run.")
+	}
 
 	// Enable raw mode for terminal
 	oldState, err := editor.EnableRawMode(fd)
@@ -15,16 +21,20 @@ func main() {
 		panic(err)
 	}
 
-	// Ensure cleanup on exit
 	defer editor.DisableRawMode(fd, oldState)
 	defer editor.ClearScreen(editor.Screen)
 	defer editor.MoveCursorTopLeft()
 
-	// Callback function to read keyboard input
 	onKeypress := func() (key byte) {
-		reader := bufio.NewReader(os.Stdin)
-		key, _ = reader.ReadByte()
-		return key
+		var b [1]byte
+		n, err := unix.Read(fd, b[:])
+		if n == 0 || err != nil {
+			// On timeout (n=0) or error, return a 0 byte
+			// editorReadKey is built to handle this.
+			return 0x00
+		}
+		// Return the single byte read
+		return b[0]
 	}
 
 	// Initial screen setup

@@ -26,6 +26,7 @@ type Session struct {
 	screenCols uint16
 }
 
+// The session global variable
 var session Session
 
 // EnableRawMode sets the terminal into raw mode
@@ -41,6 +42,11 @@ func EnableRawMode(fd int) (*unix.Termios, error) {
 	newState.Iflag &^= unix.IXON
 	newState.Iflag &^= unix.BRKINT | unix.ICRNL | unix.INPCK | unix.ISTRIP
 	newState.Oflag &^= unix.OPOST
+
+	// Read() will block for at most 100ms (1/10th of a second)
+	// If no key is pressed, it returns 0 bytes.
+	newState.Cc[unix.VMIN] = 0
+	newState.Cc[unix.VTIME] = 1
 
 	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &newState); err != nil {
 		return nil, err
@@ -96,31 +102,63 @@ func InitSession(fd int) {
 	session.screenCols = cols
 }
 
-// editorReadKey reads a key from stdin, handling escape sequences
+// editorReadKey reads a key from stdin, intelligently handling multi-byte
+// ANSI escape sequences. This is necessary because special keys, like the
+// arrow keys, are not sent as a single byte.
+//
+// For example:
+//   - Arrow Up    is sent as 3 bytes: \x1b [ A
+//   - Arrow Down  is sent as 3 bytes: \x1b [ B
+//   - ...and so on.
+//
+// This function reads the first byte. If it's '\x1b' (Esc), it uses the
+// non-blocking callback (which respects the VMIN/VTIME timeout) to
+// check for the subsequent bytes ('[' and 'A'/'B'/'C'/'D').
+//
+// This allows it to distinguish between a user just pressing the 'Esc' key
+// (where the subsequent reads will time out) and a user pressing an arrow
+// key (where the sequence is read successfully).
 func editorReadKey(callback func() byte) int {
 	c := callback()
 
-	if c == Esc {
-		// Try to read the next two bytes for escape sequence
-		seq1 := callback()
-		seq2 := callback()
-
-		if seq1 == '[' {
-			switch seq2 {
-			case 'A':
-				return ArrowUp
-			case 'B':
-				return ArrowDown
-			case 'C':
-				return ArrowRight
-			case 'D':
-				return ArrowLeft
-			}
-		}
-		return int(Esc)
+	// If we time out (c == 0), just return 0
+	if c == 0 {
+		return 0
 	}
 
-	return int(c)
+	// If it's not an escape sequence, return the key
+	if c != Esc {
+		return int(c)
+	}
+
+	// It's an escape key. Try to read the next two bytes.
+	// These will also time out if no byte is available.
+	seq1 := callback()
+	if seq1 == 0 {
+		return int(Esc) // Just an Esc key was pressed
+	}
+
+	seq2 := callback()
+	if seq2 == 0 {
+		return int(Esc) // Incomplete sequence, treat as Esc
+	}
+
+	// Check for \x1b[... sequences
+	if seq1 == '[' {
+		switch seq2 {
+		case 'A':
+			return ArrowUp
+		case 'B':
+			return ArrowDown
+		case 'C':
+			return ArrowRight
+		case 'D':
+			return ArrowLeft
+		}
+	}
+
+	// If it's not a recognized sequence, just return Esc
+	return int(Esc)
 }
 
 // ProcessKeypress handles keyboard input and updates editor state
@@ -133,6 +171,10 @@ func ProcessKeypress(callback func() (key byte)) {
 
 	for {
 		key := editorReadKey(callback)
+
+		if key == 0 {
+			continue
+		}
 
 		// Handle arrow keys
 		if key >= 1000 {

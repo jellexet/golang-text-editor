@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-// Rope data structure - a binary tree for efficient text manipulation
+// Rope data structure - a binary tree
 type Rope struct {
 	left   *Rope
 	right  *Rope
@@ -250,11 +250,11 @@ func (r *Rope) Print(indent string) {
 	r.right.Print(indent + "  R:")
 }
 
-// Rebalance optimizes the rope structure (optional, for maintaining performance)
+// Rebalance optimizes the rope structure
 func (r *Rope) Rebalance() *Rope {
 	if r == nil {
 		return nil
 	}
-	// Simple rebalancing: convert to string and rebuild
+	// I just convert the rope to string and rebuild it
 	return NewRope(r.String())
 }
