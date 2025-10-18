@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/jellexet/golang-text-editor/pkg/editor"
 	"golang.org/x/sys/unix"
 	"log"
@@ -20,10 +21,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	// Enters an alternate screen buffer
+	fmt.Print("\x1b[?1049h")
 
+	// Printing this exits the alternate screen buffer
+	defer fmt.Print("\x1b[?1049h")
 	defer editor.DisableRawMode(fd, oldState)
-	defer editor.ClearScreen(editor.Screen)
-	defer editor.MoveCursorTopLeft()
 
 	var initialContent string
 	var filename string
@@ -39,6 +42,8 @@ func main() {
 	}
 	editor.InitSession(fd, filename, initialContent)
 
+	// function to be passed as argument to ProcessKeypress()
+	// It defines what to do for each keypress
 	onKeypress := func() (key byte) {
 		var b [1]byte
 		n, err := unix.Read(fd, b[:])
@@ -47,14 +52,8 @@ func main() {
 			// editorReadKey is built to handle this.
 			return 0x00
 		}
-		// Return the single byte read
 		return b[0]
 	}
-
-	// Initial screen setup
-	editor.ClearScreen(editor.Screen)
-	editor.DrawTildes(fd)
-	editor.MoveCursorTopLeft()
 
 	// Start the main editor loop
 	editor.ProcessKeypress(fd, onKeypress)

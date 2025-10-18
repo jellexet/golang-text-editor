@@ -202,6 +202,8 @@ func ProcessKeypress(fd int, callback func() (key byte)) {
 		c := byte(key)
 		switch c {
 		case CtrlQ:
+			ClearScreen(Screen)
+			MoveCursorTopLeft()
 			return
 		case CtrlF:
 			handleSearch(callback)
@@ -582,11 +584,9 @@ func refreshScreen(fd int) {
 	// Draw status bar (inverted colors)
 	var statusMsg string
 	if session.statusMessage != "" {
-		// Show a temporary message (e.g., "Not found")
 		statusMsg = session.statusMessage
 		session.statusMessage = "" // Clear it after displaying once
 	} else {
-		// Show default status
 		statusMsg = fmt.Sprintf("File: %s | Row:%d Col:%d | Ctrl-Q:Quit Ctrl-S:Save Ctrl-F:Find",
 			session.filename, session.cursorRow, session.cursorCol)
 	}
