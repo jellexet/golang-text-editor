@@ -25,6 +25,20 @@ func main() {
 	defer editor.ClearScreen(editor.Screen)
 	defer editor.MoveCursorTopLeft()
 
+	var initialContent string
+	var filename string
+	if len(os.Args) > 1 {
+		filename = os.Args[1]
+		contentBytes, err := os.ReadFile(filename)
+		// If file doesn't exist or errors, we'll just start with an empty buffer
+		if err == nil {
+			initialContent = string(contentBytes)
+		}
+	} else {
+		filename = "[No Name]"
+	}
+	editor.InitSession(fd, filename, initialContent)
+
 	onKeypress := func() (key byte) {
 		var b [1]byte
 		n, err := unix.Read(fd, b[:])
@@ -43,5 +57,5 @@ func main() {
 	editor.MoveCursorTopLeft()
 
 	// Start the main editor loop
-	editor.ProcessKeypress(onKeypress)
+	editor.ProcessKeypress(fd, onKeypress)
 }

@@ -16,14 +16,17 @@ type Action struct {
 
 // Session contains the information to display the text, undo-redo and edit the text
 type Session struct {
-	rope       *buffer.Rope
-	undoStack  []Action
-	redoStack  []Action
-	cursorIdx  int // linear index in the rope
-	cursorRow  int // 1-indexed row (screen position)
-	cursorCol  int // 1-indexed column (screen position)
-	screenRows uint16
-	screenCols uint16
+	rope            *buffer.Rope
+	undoStack       []Action
+	redoStack       []Action
+	cursorIdx       int // linear index in the rope
+	cursorRow       int // 1-indexed row (screen position)
+	cursorCol       int // 1-indexed column (screen position)
+	screenRows      uint16
+	screenCols      uint16
+	filename        string // Name of the file being edited
+	statusMessage   string // For showing messages like "Not found"
+	lastSearchQuery string // For "find next"
 }
 
 // The session global variable
@@ -62,6 +65,7 @@ func DisableRawMode(fd int, prevState *unix.Termios) error {
 
 // Control character constants
 const (
+	CtrlF byte = 0x06
 	CtrlQ byte = 0x11
 	CtrlZ byte = 0x1A
 	CtrlR byte = 0x12
@@ -90,8 +94,9 @@ const (
 )
 
 // Initialize session with rope and screen dimensions
-func InitSession(fd int) {
+func InitSession(fd int, filename string, initialContent string) {
 	session.rope = buffer.NewRope("")
+	session.filename = filename
 	session.cursorIdx = 0
 	session.cursorRow = 1
 	session.cursorCol = 1
@@ -100,6 +105,7 @@ func InitSession(fd int) {
 	rows, cols := getWindowSize(fd)
 	session.screenRows = rows
 	session.screenCols = cols
+	updateCursorPosition()
 }
 
 // editorReadKey reads a key from stdin, intelligently handling multi-byte
@@ -162,9 +168,7 @@ func editorReadKey(callback func() byte) int {
 }
 
 // ProcessKeypress handles keyboard input and updates editor state
-func ProcessKeypress(callback func() (key byte)) {
-	fd := int(unix.Stdin)
-	InitSession(fd)
+func ProcessKeypress(fd int, callback func() (key byte)) {
 
 	// Initial screen draw
 	refreshScreen(fd)
@@ -197,6 +201,9 @@ func ProcessKeypress(callback func() (key byte)) {
 		switch c {
 		case CtrlQ:
 			return
+		case CtrlF:
+			handleSearch(callback)
+			refreshScreen(fd)
 		case CtrlZ:
 			handleUndo()
 			refreshScreen(fd)
@@ -397,6 +404,92 @@ func handleRedo() {
 	updateCursorPosition()
 }
 
+// Draws a prompt on the status bar and waits for user input
+func editorDrawPrompt(prompt string, callback func() byte) string {
+	var input string
+	for {
+		// Display the prompt on the status line
+		msg := fmt.Sprintf("%s %s", prompt, input)
+
+		var buf strings.Builder
+		buf.WriteString(fmt.Sprintf("\x1b[%d;1H", session.screenRows)) // Go to status line
+		buf.WriteString("\x1b[7m")                                     // Inverted colors
+		buf.WriteString(msg)
+		buf.WriteString("\x1b[K") // Clear rest of line
+		buf.WriteString("\x1b[m") // Reset colors
+		// Move cursor to end of input
+		buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", session.screenRows, len(msg)+1))
+		buf.WriteString("\x1b[?25h") // Show cursor
+		fmt.Print(buf.String())
+
+		key := editorReadKey(callback)
+
+		switch key {
+		case int(Return):
+			return input // Done
+		case int(Esc):
+			return "" // Canceled
+		case int(Backspace):
+			if len(input) > 0 {
+				input = input[:len(input)-1]
+			}
+		case 0, ArrowUp, ArrowDown, ArrowLeft, ArrowRight:
+			// Ignore timeouts and arrow keys in prompt mode
+			continue
+		default:
+			if key >= 32 && key < 127 { // Printable char
+				input += string(byte(key))
+			}
+		}
+	}
+}
+
+// Prompts user for search query and moves cursor to result
+func handleSearch(callback func() byte) {
+	// Save cursor position in case of cancel/not found
+	oldCursorIdx := session.cursorIdx
+
+	query := editorDrawPrompt("Search (Esc to cancel):", callback)
+
+	if query == "" {
+		// User hit Esc
+		session.statusMessage = "Search canceled"
+		return
+	}
+
+	session.lastSearchQuery = query // Save for next time
+
+	text := session.rope.String()
+
+	// Start search from *after* the current cursor position
+	searchFrom := session.cursorIdx + 1
+	if searchFrom >= session.rope.Length() {
+		searchFrom = 0 // Wrap around if at end
+	}
+
+	idx := strings.Index(text[searchFrom:], query)
+
+	if idx != -1 {
+		// Found
+		session.cursorIdx = searchFrom + idx // Adjust index
+		updateCursorPosition()
+		session.statusMessage = "" // Clear status
+	} else {
+		// Not found from cursor. Try from beginning.
+		idx = strings.Index(text, query)
+		if idx != -1 {
+			// Found at beginning
+			session.cursorIdx = idx
+			updateCursorPosition()
+			session.statusMessage = "Search wrapped to top"
+		} else {
+			// Not found at all
+			session.statusMessage = "Not found: " + query
+			session.cursorIdx = oldCursorIdx // Restore cursor
+		}
+	}
+}
+
 // updateCursorPosition updates row and column based on linear index
 func updateCursorPosition() {
 	text := session.rope.String()
@@ -439,6 +532,8 @@ func getLineStartIndex(row int) int {
 func refreshScreen(fd int) {
 	var buf strings.Builder
 
+	// Hide cursor during refresh
+	buf.WriteString("\x1b[?25l")
 	// Clear screen and move cursor to top-left
 	buf.WriteString("\x1b[2J")
 	buf.WriteString("\x1b[H")
@@ -453,12 +548,21 @@ func refreshScreen(fd int) {
 		} else {
 			buf.WriteString("~")
 		}
+		buf.WriteString("\x1b[K") // Clear rest of the line
 		buf.WriteString("\r\n")
 	}
 
 	// Draw status bar (inverted colors)
-	statusMsg := fmt.Sprintf("Row:%d Col:%d Idx:%d Len:%d | Ctrl-Q:Quit Ctrl-Z:Undo Ctrl-R:Redo",
-		session.cursorRow, session.cursorCol, session.cursorIdx, session.rope.Length())
+	var statusMsg string
+	if session.statusMessage != "" {
+		// Show a temporary message (e.g., "Not found")
+		statusMsg = session.statusMessage
+		session.statusMessage = "" // Clear it after displaying once
+	} else {
+		// Show default status
+		statusMsg = fmt.Sprintf("File: %s | Row:%d Col:%d | Ctrl-Q:Quit Ctrl-F:Find",
+			session.filename, session.cursorRow, session.cursorCol)
+	}
 
 	// Truncate status if too long
 	if len(statusMsg) > int(session.screenCols) {
@@ -475,6 +579,8 @@ func refreshScreen(fd int) {
 
 	// Move cursor to correct position
 	buf.WriteString(fmt.Sprintf("\x1b[%d;%dH", session.cursorRow, session.cursorCol))
+	// Show cursor
+	buf.WriteString("\x1b[?25h")
 
 	// Write everything at once
 	fmt.Print(buf.String())
