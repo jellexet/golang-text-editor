@@ -13,7 +13,7 @@ all the details.
   * **Text Editing**: Basic insertion (typing) and deletion (Backspace).
   * **Navigation**: Cursor navigation using Arrow Keys (Up, Down, Left, Right).
   * **Undo/Redo**: Undo (`Ctrl-Z`) and Redo (`Ctrl-R`) your last actions.
-* **Search**: Finds, (not very well (: ), text in the buffer (`Ctrl-F`).
+* **Search**: Finds text in the buffer (`Ctrl-F`).
 
 ## Keybindings
 
