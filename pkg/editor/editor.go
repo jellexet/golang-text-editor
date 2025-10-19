@@ -47,8 +47,8 @@ func EnableRawMode(fd int) (*unix.Termios, error) {
 	newState.Iflag &^= unix.BRKINT | unix.ICRNL | unix.INPCK | unix.ISTRIP
 	newState.Oflag &^= unix.OPOST
 
-	// Read() will block for at most 100ms (1/10th of a second)
-	// If no key is pressed, it returns 0 bytes.
+	// Read() will block for at most 100ms
+	// If no key is pressed, it returns 0x00 byte.
 	newState.Cc[unix.VMIN] = 0
 	newState.Cc[unix.VTIME] = 1
 
@@ -110,50 +110,50 @@ func InitSession(fd int, filename string, initialContent string) {
 	updateCursorPosition()
 }
 
-// editorReadKey reads a key from stdin, intelligently handling multi-byte
-// ANSI escape sequences. This is necessary because special keys, like the
-// arrow keys, are not sent as a single byte.
+// editorReadKeypress reads a key from stdin, handling multi-byte ANSI escape sequences.
+// This is necessary because special keys, like the arrow keys,
+// are not sent as a single byte.
 //
 // For example:
 //   - Arrow Up    is sent as 3 bytes: \x1b [ A
 //   - Arrow Down  is sent as 3 bytes: \x1b [ B
 //   - ...and so on.
 //
-// This function reads the first byte. If it's '\x1b' (Esc), it uses the
+// This function reads the first byte. If it's '\x1b', it uses the
 // non-blocking callback (which respects the VMIN/VTIME timeout) to
 // check for the subsequent bytes ('[' and 'A'/'B'/'C'/'D').
 //
 // This allows it to distinguish between a user just pressing the 'Esc' key
 // (where the subsequent reads will time out) and a user pressing an arrow
 // key (where the sequence is read successfully).
-func editorReadKey(callback func() byte) int {
-	c := callback()
+func editorReadKeypress(callback func() byte) int {
+	firstByte := callback()
 
-	// If we time out (c == 0), just return 0
-	if c == 0 {
+	// If we time out (firstByte == 0), just return 0
+	if firstByte == 0 {
 		return 0
 	}
 
 	// If it's not an escape sequence, return the key
-	if c != Esc {
-		return int(c)
+	if firstByte != Esc {
+		return int(firstByte)
 	}
 
 	// It's an escape key. Try to read the next two bytes.
 	// These will also time out if no byte is available.
-	seq1 := callback()
-	if seq1 == 0 {
+	secondByte := callback()
+	if secondByte == 0 {
 		return int(Esc) // Just an Esc key was pressed
 	}
 
-	seq2 := callback()
-	if seq2 == 0 {
+	thirdByte := callback()
+	if thirdByte == 0 {
 		return int(Esc) // Incomplete sequence, treat as Esc
 	}
 
 	// Check for \x1b[... sequences
-	if seq1 == '[' {
-		switch seq2 {
+	if secondByte == '[' {
+		switch thirdByte {
 		case 'A':
 			return ArrowUp
 		case 'B':
@@ -176,7 +176,7 @@ func ProcessKeypress(fd int, callback func() (key byte)) {
 	refreshScreen(fd)
 
 	for {
-		key := editorReadKey(callback)
+		key := editorReadKeypress(callback)
 
 		if key == 0 {
 			continue
@@ -199,8 +199,8 @@ func ProcessKeypress(fd int, callback func() (key byte)) {
 		}
 
 		// Handle control characters
-		c := byte(key)
-		switch c {
+		controlChar := byte(key)
+		switch controlChar {
 		case CtrlQ:
 			ClearScreen(Screen)
 			MoveCursorTopLeft()
@@ -224,24 +224,30 @@ func ProcessKeypress(fd int, callback func() (key byte)) {
 			handleInsert("\n")
 			refreshScreen(fd)
 		default:
-			// Regular character
-			if c >= 32 && c < 127 {
-				handleInsert(string(c))
+			if isRegularCharacter(controlChar) {
+				handleInsert(string(controlChar))
 				refreshScreen(fd)
 			}
 		}
 	}
 }
 
+// isRegularCharacter returns true if the byte is a regular printable character
+// regular characters, looking at the ASCII table, go from SPACE(32) to DEL(127)
+func isRegularCharacter(c byte) bool {
+	return c >= 32 && c < 127
+}
+
 // editorMoveCursor moves the cursor based on arrow key
-func editorMoveCursor(key int) {
+func editorMoveCursor(arrowKey int) {
 	lines := getLines()
 	currentLine := ""
 	if session.cursorRow > 0 && session.cursorRow <= len(lines) {
 		currentLine = lines[session.cursorRow-1]
 	}
 
-	switch key {
+	// Terminals are 1-indexed, so the minimum row or coulmn is 1.
+	switch arrowKey {
 	case ArrowLeft:
 		if session.cursorCol > 1 {
 			session.cursorCol--
@@ -424,6 +430,7 @@ func handleSave(callback func() byte) {
 
 	content := session.rope.String()
 
+	// 0644 -> the user creating the file has R/W permissions, other users have only R permissions
 	err := os.WriteFile(session.filename, []byte(content), 0644)
 	if err != nil {
 		session.statusMessage = fmt.Sprintf("Error saving file: %v", err)
@@ -441,7 +448,7 @@ func editorDrawPrompt(prompt string, callback func() byte) string {
 		msg := fmt.Sprintf("%s %s", prompt, input)
 
 		var buf strings.Builder
-		buf.WriteString(fmt.Sprintf("\x1b[%d;1H", session.screenRows)) // Go to status line
+		buf.WriteString(fmt.Sprintf("\x1b[%d;1H", session.screenRows)) // Go to last line (status line)
 		buf.WriteString("\x1b[7m")                                     // Inverted colors
 		buf.WriteString(msg)
 		buf.WriteString("\x1b[K") // Clear rest of line
@@ -451,7 +458,7 @@ func editorDrawPrompt(prompt string, callback func() byte) string {
 		buf.WriteString("\x1b[?25h") // Show cursor
 		fmt.Print(buf.String())
 
-		key := editorReadKey(callback)
+		key := editorReadKeypress(callback)
 
 		switch key {
 		case int(Return):
@@ -466,7 +473,7 @@ func editorDrawPrompt(prompt string, callback func() byte) string {
 			// Ignore timeouts and arrow keys in prompt mode
 			continue
 		default:
-			if key >= 32 && key < 127 { // Printable char
+			if isRegularCharacter(byte(key)) {
 				input += string(byte(key))
 			}
 		}

@@ -33,7 +33,7 @@ func TestEditorReadKey_PrintableAndEscAndArrow(t *testing.T) {
 
 	t.Run("printable char", func(t *testing.T) {
 		cb := makeCallback([]byte{'a'})
-		got := editorReadKey(cb)
+		got := editorReadKeypress(cb)
 		if got != int('a') {
 			t.Fatalf("expected %d got %d", int('a'), got)
 		}
@@ -41,7 +41,7 @@ func TestEditorReadKey_PrintableAndEscAndArrow(t *testing.T) {
 
 	t.Run("esc then timeout", func(t *testing.T) {
 		cb := makeCallback([]byte{Esc, 0})
-		got := editorReadKey(cb)
+		got := editorReadKeypress(cb)
 		if got != int(Esc) {
 			t.Fatalf("expected Esc (%d) got %d", int(Esc), got)
 		}
@@ -49,7 +49,7 @@ func TestEditorReadKey_PrintableAndEscAndArrow(t *testing.T) {
 
 	t.Run("arrow up sequence", func(t *testing.T) {
 		cb := makeCallback([]byte{Esc, '[', 'A'})
-		got := editorReadKey(cb)
+		got := editorReadKeypress(cb)
 		if got != ArrowUp {
 			t.Fatalf("expected ArrowUp (%d) got %d", ArrowUp, got)
 		}
