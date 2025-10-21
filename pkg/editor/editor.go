@@ -67,6 +67,7 @@ func DisableRawMode(fd int, prevState *unix.Termios) error {
 // Control character constants
 const (
 	CtrlF byte = 0x06
+	CtrlN byte = 0x0E
 	CtrlQ byte = 0x11
 	CtrlR byte = 0x12
 	CtrlS byte = 0x13
@@ -108,6 +109,75 @@ func InitSession(fd int, filename string, initialContent string) {
 	session.screenRows = rows
 	session.screenCols = cols
 	updateCursorPosition()
+}
+
+// ProcessKeypress handles keyboard input and updates editor state
+func ProcessKeypress(fd int, callback func() (key byte)) {
+
+	// Initial screen draw
+	refreshScreen(fd)
+
+	for {
+		key := editorReadKeypress(callback)
+
+		if key == 0 {
+			continue
+		}
+
+		// Handle arrow keys
+		if key >= 1000 {
+			switch key {
+			case ArrowUp:
+				editorMoveCursor(ArrowUp)
+			case ArrowDown:
+				editorMoveCursor(ArrowDown)
+			case ArrowLeft:
+				editorMoveCursor(ArrowLeft)
+			case ArrowRight:
+				editorMoveCursor(ArrowRight)
+			}
+			refreshScreen(fd)
+			continue
+		}
+
+		// Handle control characters
+		controlChar := byte(key)
+		switch controlChar {
+		case CtrlQ:
+			ClearScreen(Screen)
+			MoveCursorTopLeft()
+			return
+		case CtrlF:
+			handleSearch(fd, callback)
+			refreshScreen(fd)
+		case CtrlR:
+			handleRedo()
+			refreshScreen(fd)
+		case CtrlS:
+			handleSave(callback)
+			refreshScreen(fd)
+		case CtrlZ:
+			handleUndo()
+			refreshScreen(fd)
+		case Backspace:
+			handleBackspace()
+			refreshScreen(fd)
+		case Return:
+			handleInsert("\n")
+			refreshScreen(fd)
+		default:
+			if isRegularCharacter(controlChar) {
+				handleInsert(string(controlChar))
+				refreshScreen(fd)
+			}
+		}
+	}
+}
+
+// isRegularCharacter returns true if the byte is a regular printable character
+// regular characters, looking at the ASCII table, go from SPACE(32) to DEL(127)
+func isRegularCharacter(c byte) bool {
+	return c >= 32 && c < 127
 }
 
 // editorReadKeypress reads a key from stdin, handling multi-byte ANSI escape sequences.
@@ -167,75 +237,6 @@ func editorReadKeypress(callback func() byte) int {
 
 	// If it's not a recognized sequence, just return Esc
 	return int(Esc)
-}
-
-// ProcessKeypress handles keyboard input and updates editor state
-func ProcessKeypress(fd int, callback func() (key byte)) {
-
-	// Initial screen draw
-	refreshScreen(fd)
-
-	for {
-		key := editorReadKeypress(callback)
-
-		if key == 0 {
-			continue
-		}
-
-		// Handle arrow keys
-		if key >= 1000 {
-			switch key {
-			case ArrowUp:
-				editorMoveCursor(ArrowUp)
-			case ArrowDown:
-				editorMoveCursor(ArrowDown)
-			case ArrowLeft:
-				editorMoveCursor(ArrowLeft)
-			case ArrowRight:
-				editorMoveCursor(ArrowRight)
-			}
-			refreshScreen(fd)
-			continue
-		}
-
-		// Handle control characters
-		controlChar := byte(key)
-		switch controlChar {
-		case CtrlQ:
-			ClearScreen(Screen)
-			MoveCursorTopLeft()
-			return
-		case CtrlF:
-			handleSearch(callback)
-			refreshScreen(fd)
-		case CtrlR:
-			handleRedo()
-			refreshScreen(fd)
-		case CtrlS:
-			handleSave(callback)
-			refreshScreen(fd)
-		case CtrlZ:
-			handleUndo()
-			refreshScreen(fd)
-		case Backspace:
-			handleBackspace()
-			refreshScreen(fd)
-		case Return:
-			handleInsert("\n")
-			refreshScreen(fd)
-		default:
-			if isRegularCharacter(controlChar) {
-				handleInsert(string(controlChar))
-				refreshScreen(fd)
-			}
-		}
-	}
-}
-
-// isRegularCharacter returns true if the byte is a regular printable character
-// regular characters, looking at the ASCII table, go from SPACE(32) to DEL(127)
-func isRegularCharacter(c byte) bool {
-	return c >= 32 && c < 127
 }
 
 // editorMoveCursor moves the cursor based on arrow key
@@ -481,7 +482,7 @@ func editorDrawPrompt(prompt string, callback func() byte) string {
 }
 
 // Prompts user for search query and moves cursor to result
-func handleSearch(callback func() byte) {
+func handleSearch(fd int, callback func() byte) {
 	// Save cursor position in case of cancel/not found
 	oldCursorIdx := session.cursorIdx
 
@@ -497,31 +498,34 @@ func handleSearch(callback func() byte) {
 
 	text := session.rope.String()
 
-	// Start search from *after* the current cursor position
-	searchFrom := session.cursorIdx + 1
-	if searchFrom >= session.rope.Length() {
-		searchFrom = 0 // Wrap around if at end
+	numInstances := strings.Count(text, query)
+
+	if numInstances == 0 {
+		session.statusMessage = "Not found: " + query
+		session.cursorIdx = oldCursorIdx // Restore cursor
+		return
 	}
 
-	idx := strings.Index(text[searchFrom:], query)
+	searchFrom := 0
+	for i := 1; i <= numInstances; i++ {
 
-	if idx != -1 {
-		// Found
+		idx := strings.Index(text[searchFrom:], query)
+
 		session.cursorIdx = searchFrom + idx // Adjust index
+		searchFrom += session.cursorIdx + 1  // Start searching from next character
 		updateCursorPosition()
-		session.statusMessage = "" // Clear status
-	} else {
-		// Not found from cursor. Try from beginning.
-		idx = strings.Index(text, query)
-		if idx != -1 {
-			// Found at beginning
-			session.cursorIdx = idx
-			updateCursorPosition()
-			session.statusMessage = "Search wrapped to top"
-		} else {
-			// Not found at all
-			session.statusMessage = "Not found: " + query
-			session.cursorIdx = oldCursorIdx // Restore cursor
+		session.statusMessage = fmt.Sprintf("Ctrl-n to next %d/%d", i, numInstances)
+		refreshScreen(fd)
+
+	Timeout:
+		key := editorReadKeypress(callback) // Read kepress for Ctrl-n
+		switch {
+		case key == int(CtrlN):
+			// Do nothing
+		case isRegularCharacter(byte(key)):
+			return
+		default:
+			goto Timeout
 		}
 	}
 }

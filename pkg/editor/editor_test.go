@@ -186,8 +186,8 @@ func TestGetLinesAndStartIndex(t *testing.T) {
 	}
 }
 
-// handleSearch test (simulate typing "lo" then Return)
-func TestHandleSearch_FindsAndWraps(t *testing.T) {
+// handleSearch test (simulate typing "lo" then Return, then Ctrl-N to cycle)
+func TestHandleSearch_FindsAndCycles(t *testing.T) {
 	resetSessionForTest()
 
 	content := "hello\nworld\nhello"
@@ -195,26 +195,75 @@ func TestHandleSearch_FindsAndWraps(t *testing.T) {
 	session.cursorIdx = 0
 	updateCursorPosition()
 
-	// Simulate typing "lo" then Return
-	seq := []byte{'l', 'o', Return}
+	// The handleSearch function:
+	// 1. Prompts for query (consumes: 'l', 'o', Return)
+	// 2. Finds all instances and cycles through them
+	// 3. After each instance, waits for Ctrl-N to continue or any other key to stop
+
+	// There are 2 instances of "lo" in the content (at index 3 and 15)
+	// We need: prompt input + Ctrl-N after first match + any key to exit after second match
+	seq := []byte{
+		'l', 'o', Return, // prompt input
+		CtrlN, // continue to next match
+		'q',   // exit after second match (any regular char works)
+	}
 	cb := makeCallback(seq)
 
-	handleSearch(cb)
-	// After searching from cursorIdx 0, first match of "lo" after position 1 is at "hello" index 3
-	foundIdx := strings.Index(content, "lo")
-	if session.cursorIdx != foundIdx {
-		t.Fatalf("search did not move cursor to first occurrence: got %d want %d", session.cursorIdx, foundIdx)
+	// Mock fd parameter (not actually used for I/O in test)
+	mockFd := 0
+
+	handleSearch(mockFd, cb)
+
+	// After cycling through both matches, cursor should be at the second occurrence
+	lastOcc := strings.LastIndex(content, "lo")
+	if session.cursorIdx != lastOcc {
+		t.Fatalf("search did not move cursor to last occurrence: got %d want %d", session.cursorIdx, lastOcc)
+	}
+}
+
+// Test search not found
+func TestHandleSearch_NotFound(t *testing.T) {
+	resetSessionForTest()
+
+	session.rope = buffer.NewRope("hello world")
+	session.cursorIdx = 0
+	updateCursorPosition()
+	oldIdx := session.cursorIdx
+
+	// Search for something that doesn't exist
+	seq := []byte{'x', 'y', 'z', Return}
+	cb := makeCallback(seq)
+
+	handleSearch(0, cb)
+
+	// Cursor should be restored to original position
+	if session.cursorIdx != oldIdx {
+		t.Fatalf("cursor moved after failed search: got %d want %d", session.cursorIdx, oldIdx)
 	}
 
-	// Now move cursor to after last occurrence and search to cause wrap
-	lastOcc := strings.LastIndex(content, "lo")
-	session.cursorIdx = lastOcc + 1
+	// Status message should indicate not found
+	if !strings.Contains(session.statusMessage, "Not found") {
+		t.Fatalf("expected 'Not found' in status message, got %q", session.statusMessage)
+	}
+}
+
+// Test search cancellation
+func TestHandleSearch_Cancel(t *testing.T) {
+	resetSessionForTest()
+
+	session.rope = buffer.NewRope("hello world")
+	session.cursorIdx = 5
 	updateCursorPosition()
-	cb2 := makeCallback([]byte{'l', 'o', Return})
-	handleSearch(cb2)
-	// Because searching starts from cursorIdx+1, should wrap and find earlier occurrence at index foundIdx
-	if session.cursorIdx != foundIdx {
-		t.Fatalf("search wrap did not move cursor to wrapped occurrence: got %d want %d", session.cursorIdx, foundIdx)
+
+	// Press Esc to cancel
+	seq := []byte{Esc}
+	cb := makeCallback(seq)
+
+	handleSearch(0, cb)
+
+	// Status message should indicate cancellation
+	if !strings.Contains(session.statusMessage, "canceled") {
+		t.Fatalf("expected 'canceled' in status message, got %q", session.statusMessage)
 	}
 }
 

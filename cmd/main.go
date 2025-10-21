@@ -48,7 +48,7 @@ func main() {
 		var b [1]byte
 		n, err := unix.Read(fd, b[:])
 		if n == 0 || err != nil {
-			// On timeout (n=0) or error, return a 0 byte
+			// On timeout (n=0) or error, return 0x00
 			// editorReadKey is built to handle this.
 			return 0x00
 		}
