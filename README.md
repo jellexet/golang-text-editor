@@ -1,5 +1,5 @@
 # golang-text-editor
-A simple terminal-based text editor written in Golang as an excercise
+A simple terminal-based text editor, written using Golang with only standard libraries allowed.
 
 I have taken inspiration from [here](https://viewsourcecode.org/snaptoken/kilo/index.html).
 If something is hard to follow in the source code, the linked website explains
@@ -23,6 +23,7 @@ all the details.
 | **Backspace** | Delete character before cursor |
 | **Ctrl-S** | Save file (prompts for filename if new) |
 | **Ctrl-F** | Search for text |
+| **Ctrl-N** | Search next (After Ctrl-F) |
 | **Ctrl-Z** | Undo last action |
 | **Ctrl-R** | Redo last action |
 | **Ctrl-Q** | Quit the editor |
